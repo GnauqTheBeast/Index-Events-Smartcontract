@@ -4,28 +4,22 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"time"
 
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
-// type RequestCreated struct {
-// 	User      common.Address
-// 	RequestId common.Address
-// 	Amount    int64
-// }
-
-// type ResponseCreated struct {
-// 	User      common.Address
-// 	RequestId common.Address
-// 	PrizeIds  []uint64
-// }
+const (
+	BlockRange = 50000
+)
 
 var (
-	LogRequestCreatedSig  = []byte("RequestCreated(address,uint256,uint256)")
-	LogResponseCreatedSig = []byte("ResponseCreated(address,uint256,uint256[])")
+	LogRequestCreated  = crypto.Keccak256Hash([]byte("RequestCreated(address,uint256,uint256)")).Hex()
+	LogResponseCreated = crypto.Keccak256Hash([]byte("ResponseCreated(address,uint256,uint256[])")).Hex()
 )
 
 func IndexingEvent(BSC_RPC, ContractAddress string, StartBlockNumber *big.Int) error {
@@ -34,54 +28,120 @@ func IndexingEvent(BSC_RPC, ContractAddress string, StartBlockNumber *big.Int) e
 		return err
 	}
 
-	endBlockNumber := big.NewInt(int64(20981700))
+	currentBlock := StartBlockNumber
 
 	contractAddress := common.HexToAddress(ContractAddress)
-	query := ethereum.FilterQuery{
-		FromBlock: StartBlockNumber,
-		ToBlock:   endBlockNumber,
-		Addresses: []common.Address{
-			contractAddress,
-		},
+
+	for {
+		// If block not exist, sleep
+		err = Delay(client, currentBlock)
+		if err != nil {
+			return err
+		}
+
+		query := ethereum.FilterQuery{
+			FromBlock: currentBlock,
+			ToBlock:   currentBlock.Add(currentBlock, big.NewInt(1000)),
+			Addresses: []common.Address{
+				contractAddress,
+			},
+		}
+		fmt.Println(currentBlock)
+
+		err = IterateLogs(client, query)
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func Delay(client *ethclient.Client, blockNumber *big.Int) error {
+	latestBlock, err := client.HeaderByNumber(context.Background(), nil)
+	if err != nil {
+		return err
 	}
 
+	if timeDelay := blockNumber.Int64() - latestBlock.Number.Int64(); timeDelay > 0 {
+		time.Sleep(time.Duration(int(timeDelay)*3+1) * time.Second)
+	}
+
+	return nil
+}
+
+func IterateLogs(client *ethclient.Client, query ethereum.FilterQuery) error {
 	logs, err := client.FilterLogs(context.Background(), query)
 	if err != nil {
 		return err
 	}
 
-	LogRequestCreatedSig := crypto.Keccak256Hash(LogRequestCreatedSig)
-	LogResponseCreatedSig := crypto.Keccak256Hash(LogResponseCreatedSig)
-
 	for _, vLog := range logs {
-		fmt.Printf("Log Block Number: %d\n", vLog.BlockNumber)
-		fmt.Printf("Log Index: %d\n", vLog.Index)
-		fmt.Printf("TxIndex: %d\n", vLog.TxIndex)
-		fmt.Printf("TxHash: %s\n", vLog.TxHash)
-		fmt.Printf("TxAddress: %s\n", vLog.Address)
-
 		switch vLog.Topics[0].Hex() {
-		case LogRequestCreatedSig.Hex():
-			fmt.Printf("Log Name: LogRequestCreated\n")
+		case LogRequestCreated:
+			err = SaveRequestToDb(vLog)
+			if err != nil {
+				return err
+			}
 
-			User := common.HexToAddress(vLog.Topics[1].Hex())
-			RequestId := common.HexToAddress(vLog.Topics[2].Hex())
-
-			fmt.Println(new(big.Int).SetBytes(vLog.Data).Int64())
-			fmt.Printf("User: %s\n", User.Hex())
-			fmt.Printf("RequestId: %s\n", RequestId.Hex())
-
-		case LogResponseCreatedSig.Hex():
-			fmt.Printf("Log Name: LogResponeCreated\n")
-
-			User := common.HexToAddress(vLog.Topics[1].Hex())
-			RequestId := common.HexToAddress(vLog.Topics[2].Hex())
-
-			fmt.Println(new(big.Int).SetBytes(vLog.Data).Int64())
-			fmt.Printf("User: %s\n", User.Hex())
-			fmt.Printf("RequestId: %s\n", RequestId.Hex())
+		case LogResponseCreated:
+			SaveResponseToDb(vLog)
+			if err != nil {
+				return err
+			}
 		}
-		fmt.Print("\n\n")
 	}
+
+	return nil
+}
+
+func SaveRequestToDb(vLog types.Log) error {
+	user := common.HexToAddress(vLog.Topics[1].Hex()).String()
+	requestId := common.HexToAddress(vLog.Topics[2].Hex()).String()
+
+	request := &Request{
+		BlockNumber: int64(vLog.BlockNumber),
+		TxHash:      vLog.TxHash.String(),
+		User:        user,
+		RequestId:   requestId,
+		Amount:      int(new(big.Int).SetBytes(vLog.Data).Int64()),
+		TxIndex:     int(vLog.Index),
+	}
+
+	// Insert to Db
+	fmt.Println("Insert to Db Request....")
+	_, err := db.NewInsert().Model(request).Exec(ctx)
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+	fmt.Println("Insert Successful")
+
+	return nil
+}
+
+func SaveResponseToDb(vLog types.Log) error {
+	user := common.HexToAddress(vLog.Topics[1].Hex()).String()
+	requestId := common.HexToAddress(vLog.Topics[2].Hex()).String()
+	prizeIds := make([]int, 0)
+	for i := 0; i < len(vLog.Data); i += 32 {
+		prizeIds = append(prizeIds, int(new(big.Int).SetBytes(vLog.Data[i:i+32]).Int64()))
+	}
+
+	response := &Response{
+		BlockNumber: int64(vLog.BlockNumber),
+		TxHash:      vLog.TxHash.String(),
+		User:        user,
+		RequestId:   requestId,
+		PrizeIds:    prizeIds,
+		TxIndex:     int(vLog.Index),
+	}
+
+	// Insert to Db
+	fmt.Println("Insert to Db Respone....")
+	_, err := db.NewInsert().Model(response).Exec(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Println("Insert Successful")
+
 	return nil
 }

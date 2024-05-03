@@ -10,10 +10,12 @@ import (
 )
 
 const (
-	Table       = "transactions"
-	From        = "from"
-	To          = "to"
-	BlockNumber = "block_number"
+	RequestTable  = "requests"
+	ResponseTable = "responses"
+	TxHash        = "tx_hash"
+	User          = "user"
+	RequestId     = "request_id"
+	BlockNumber   = "block_number"
 )
 
 var (
@@ -21,18 +23,24 @@ var (
 	ctx = context.Background()
 )
 
-type Transaction struct {
-	Id           int     `bun:"id,pk,autoincrement"`
-	BlockNumber  int64   `bun:"block_number,notnull"`
-	Balance      float64 `bun:"balance,notnull"`
-	RawBalance   string  `bun:"raw_balance,notnull"`
-	Hash         string  `bun:"hash,notnull"`
-	Amount       float64 `bun:"amount,notnull"`
-	RawAmount    string  `bun:"raw_amount,notnull"`
-	From         string  `bun:"from,notnull"`
-	To           string  `bun:"to"`
-	TokenAddress string  `bun:"token_address,notnull"`
-	Token        string  `bun:"token,notnull"`
+type Request struct {
+	Id          int    `bun:"id,autoincrement"`
+	BlockNumber int64  `bun:"block_number,notnull"`
+	TxHash      string `bun:"tx_hash,pk,notnull"`
+	TxIndex     int    `bun:"tx_index,notnull"`
+	Amount      int    `bun:"amount,notnull"`
+	User        string `bun:"user,notnull"`
+	RequestId   string `bun:"request_id,notnull"`
+}
+
+type Response struct {
+	Id          int    `bun:"id,autoincrement"`
+	BlockNumber int64  `bun:"block_number,notnull"`
+	TxHash      string `bun:"tx_hash,pk,notnull"`
+	TxIndex     int    `bun:"tx_index,notnull"`
+	User        string `bun:"user,notnull"`
+	RequestId   string `bun:"request_id,notnull"`
+	PrizeIds    []int  `bun:"prize_ids,notnull" json:"prizeIds"`
 }
 
 func ConnectDb(DSN string) {
@@ -41,25 +49,51 @@ func ConnectDb(DSN string) {
 }
 
 func CreateTable() error {
-	_, err := db.NewCreateTable().Model((*Transaction)(nil)).IfNotExists().Exec(ctx)
+	_, err := db.NewCreateTable().Model((*Request)(nil)).IfNotExists().Exec(ctx)
 	if err != nil {
 		return err
 	}
+
+	_, err = db.NewCreateTable().Model((*Response)(nil)).IfNotExists().Exec(ctx)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func CreateIndexes() error {
-	_, err := db.NewCreateIndex().Table(Table).Column(From).Exec(ctx)
+	_, err := db.NewCreateIndex().Table(RequestTable).Column(TxHash).Exec(ctx)
 	if err != nil {
 		return err
 	}
 
-	_, err = db.NewCreateIndex().Table(Table).Column(To).Exec(ctx)
+	_, err = db.NewCreateIndex().Table(RequestTable).Column(User).Exec(ctx)
 	if err != nil {
 		return err
 	}
 
-	_, err = db.NewCreateIndex().Table(Table).Column(BlockNumber).Exec(ctx)
+	_, err = db.NewCreateIndex().Table(RequestTable).Column(RequestId).Exec(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.NewCreateIndex().Table(RequestTable).Column(BlockNumber).Exec(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.NewCreateIndex().Table(ResponseTable).Column(TxHash).Exec(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.NewCreateIndex().Table(ResponseTable).Column(User).Exec(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.NewCreateIndex().Table(ResponseTable).Column(RequestId).Exec(ctx)
 	if err != nil {
 		return err
 	}

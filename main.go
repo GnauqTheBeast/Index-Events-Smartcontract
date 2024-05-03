@@ -28,21 +28,22 @@ func init() {
 func main() {
 	contractAddress := os.Getenv(CONTRACT_ADDRESS)
 	// Connect Db
-	// DSN := os.Getenv("DSN")
-	// config.ConnectDb(DSN)
+	DSN := os.Getenv("DSN")
+	config.ConnectDb(DSN)
 
-	// err := config.CreateTable()
-	// if err != nil {
-	// 	fmt.Println(err)
-	// 	return
-	// }
+	err := config.CreateTable()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 
-	// err = config.CreateIndexes()
-	// if err != nil {
-	// 	fmt.Println(err)
-	// 	return
-	// }
-	err := config.IndexingEvent(BSC_RPC, contractAddress, big.NewInt(StartBlockNumber))
+	err = config.CreateIndexes()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	err = config.IndexingEvent(BSC_RPC, contractAddress, big.NewInt(StartBlockNumber))
 	if err != nil {
 		fmt.Println(err)
 	}
